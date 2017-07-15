@@ -33,14 +33,15 @@ def buildNotification(name, data):
     newNotification.show()
 
 class receiver(threading.Thread):
-    def __init__(self, id):
+    def __init__(self, id, mustContinue):
         threading.Thread.__init__(self)
         self.id = id
+        self.mustContinue = mustContinue
 
     def run(self):
-        while True:
+        while self.mustContinue:
             print("Listening...")
-            listener.listen();
+            listener.listen()
             connection, address = listener.accept()
             data = connection.recv(1024)
 
@@ -60,18 +61,27 @@ class receiver(threading.Thread):
 
                 connection.close()
 
-#try:
-ipAddress = getIPAddress()
-PORT = 5005
+        def setMustContinue(value):
+            self.mustContinue = value
 
-listener = socket.socket(socket.AF_INET,
-                     socket.SOCK_STREAM)
-listener.bind((ipAddress, PORT))
-listener.listen(1)
-listener.setblocking(True)
+try:
+    ipAddress = getIPAddress()
+    PORT = 5005
 
-listenerThread = receiver(1)
-listenerThread.start()
+    listener = socket.socket(socket.AF_INET,
+                         socket.SOCK_STREAM)
+    listener.bind((ipAddress, PORT))
+    listener.listen(1)
+    listener.setblocking(True)
 
-#except Exception as e:
-#    print("Network error: can't assign IP address")
+    listenerThread = receiver(1, True)
+    listenerThread.start()
+
+except socket.error as e:
+    print("Network error: can't assign IP address.")
+except threading.ThreadError as e:
+    print("Threading error: can't create thread.")
+except KeyboardInterrupt as e:
+    if(listenerThread):
+        listenerThread.setMustContinue(False)
+    listener.close()
