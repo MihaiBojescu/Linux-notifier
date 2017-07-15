@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import gi
+import sys
 import time
 import uuid
 import json
@@ -32,6 +33,38 @@ def buildNotification(name, data):
     newNotification = Notify.Notification.new(name, data, "dialog-information")
     newNotification.show()
 
+class authWindow(Gtk.Window):
+    def __init__(self, name, address, pin):
+        Gtk.Window.__init__(self, title="Linux notifier")
+
+        vBox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        hBox = Gtk.Box(spacing=2)
+
+        self.add(vBox)
+
+        label = Gtk.Label()
+        label.set_markup("Authentification request from " + name + " (" + address + ").")
+        pinLabel = Gtk.Label()
+        pinLabel.set_markup("<span size=\"24000\">PIN: " + pin + "</span>")
+
+        vBox.pack_start(label, True, True, 0)
+        vBox.pack_start(pinLabel, True, True, 0)
+        vBox.pack_start(hBox, True, True, 0)
+
+        acceptButton = Gtk.Button.new_with_label("Accept")
+        acceptButton.connect("clicked", self.accepted)
+        denyButton = Gtk.Button.new_with_label("Deny")
+        denyButton.connect("clicked", self.denied)
+
+        hBox.pack_start(denyButton, True, True, 0)
+        hBox.pack_start(acceptButton, True, True, 0)
+
+    def accepted(self, button):
+        print("accepted")
+
+    def denied(self, button):
+        print("denied")
+
 class receiver(threading.Thread):
     def __init__(self, id, mustContinue):
         threading.Thread.__init__(self)
@@ -59,6 +92,9 @@ class receiver(threading.Thread):
                     }
                     connection.send(str.encode(str(dataToSend)))
 
+                elif(receivedData["reason"] == "auth"):
+                    print("auth")
+
                 connection.close()
 
         def setMustContinue(value):
@@ -77,11 +113,12 @@ try:
     listenerThread = receiver(1, True)
     listenerThread.start()
 
-except socket.error as e:
+except socket.error:
     print("Network error: can't assign IP address.")
-except threading.ThreadError as e:
+except threading.ThreadError:
     print("Threading error: can't create thread.")
-except KeyboardInterrupt as e:
+except KeyboardInterrupt:
+    print("Keyboard interrupt detected")
     if(listenerThread):
         listenerThread.setMustContinue(False)
     listener.close()
