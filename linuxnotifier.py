@@ -29,7 +29,6 @@ def getIPAddress():
     return ipAddress
 
 def buildNotification(name, data):
-    Notify.init(name)
     newNotification = Notify.Notification.new(name, data, "dialog-information")
     newNotification.show()
 
@@ -55,15 +54,20 @@ class authWindow(Gtk.Window):
         acceptButton.connect("clicked", self.accepted)
         denyButton = Gtk.Button.new_with_label("Deny")
         denyButton.connect("clicked", self.denied)
+        self.connect("delete-event", self.denied)
 
         hBox.pack_start(denyButton, True, True, 0)
         hBox.pack_start(acceptButton, True, True, 0)
 
     def accepted(self, button):
-        print("accepted")
+        self.accepted = True
+        self.destroy()
+        Gtk.main_quit()
 
     def denied(self, button):
-        print("denied")
+        self.accepted = False
+        self.destroy()
+        Gtk.main_quit()
 
 class receiver(threading.Thread):
     def __init__(self, id, mustContinue):
@@ -94,6 +98,27 @@ class receiver(threading.Thread):
 
                 elif(receivedData["reason"] == "auth"):
                     print("auth")
+                    newWindow = authWindow(receivedData["name"], receivedData["address"], receivedData["pin"])
+                    newWindow.show_all()
+                    Gtk.main()
+
+                    if(newWindow.accepted):
+                        print("accepted")
+                        dataToSend = {
+                            "reason": "authresponse",
+                            "response": "1"
+                        }
+                        connection.send(str.encode(str(dataToSend)))
+                    else:
+                        print("accepted")
+                        dataToSend = {
+                            "reason": "authresponse",
+                            "response": "0"
+                        }
+                        connection.send(str.encode(str(dataToSend)))
+
+                elif(receivedData["reason"] == "Notification"):
+                    buildNotification(receivedData["name"], receivedData["data"])
 
                 connection.close()
 
@@ -101,6 +126,7 @@ class receiver(threading.Thread):
             self.mustContinue = value
 
 try:
+    Notify.init("LinuxNotifier")
     ipAddress = getIPAddress()
     PORT = 5005
 
