@@ -58,6 +58,10 @@ class authWindow(Gtk.Window):
 
         hBox.pack_start(denyButton, True, True, 0)
         hBox.pack_start(acceptButton, True, True, 0)
+        
+        self.present()
+        self.set_keep_above(True)
+        self.set_default(denyButton)
 
     def accepted(self, button):
         self.accepted = True
