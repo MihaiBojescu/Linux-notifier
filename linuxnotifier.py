@@ -146,7 +146,7 @@ class receiver(threading.Thread):
             if data:
                 print("Got data, message: " + trimReceivedString(str(data)) + ".")
 
-                receivedData = json.loads(trimReceivedString(str(data)))
+                receivedData = json.loads(data.decode('utf-8'))
                 dataToSend = ""
 
                 if(receivedData["reason"] == "request information"):
@@ -171,8 +171,10 @@ class receiver(threading.Thread):
                         }
 
                         newDevice = device(receivedData["name"], receivedData["address"], receivedData["pin"])
-                        self.validDevices.append(newDevice)
-                        writeValidDevices(self.validDevices)
+                        if(newDevice not in self.validDevices):
+                            self.validDevices.append(newDevice)
+                            writeValidDevices(self.validDevices)
+
                         connection.send(str.encode(str(dataToSend)))
                     else:
                         print("denied")
