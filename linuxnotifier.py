@@ -69,7 +69,7 @@ def writeValidDevices(deviceList):
 
     for currentDevice in deviceList:
         names.append(currentDevice.name)
-        addresses.append(currentDevice.addresse)
+        addresses.append(currentDevice.address)
         pins.append(currentDevice.pin)
 
     jsonObject["name"] = names
