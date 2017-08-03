@@ -2,14 +2,12 @@
 import gi
 import os
 import sys
-import time
 import uuid
 import json
-import codecs
 import socket
 import threading
-gi.require_version('Gtk', '3.0')
-gi.require_version('Notify', '0.7')
+gi.require_version("Gtk", "3.0")
+gi.require_version("Notify", "0.7")
 from threading import Thread
 from gi.repository import Gtk
 from gi.repository import Notify
@@ -18,25 +16,25 @@ def trimReceivedString(string):
     return string[2:-1]
 
 def getMacAddress():
-  macNum = hex(uuid.getnode()).replace('0x', '').upper()
-  mac = ':'.join(macNum[i : i + 2] for i in range(0, 11, 2))
+  macNum = hex(uuid.getnode()).replace("0x", "").upper()
+  mac = ":".join(macNum[i : i + 2] for i in range(0, 11, 2))
   return mac
 
 def getIPAddress():
-    ipAddressSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    ipAddressSocket.connect(("8.8.8.8", 80))
-    ipAddress = ipAddressSocket.getsockname()[0]
-    print("IP address: " + ipAddress)
-    ipAddressSocket.close()
-    return ipAddress
+    return os.popen("ip route get 1 | head -n 1 | cut -d \" \" -f7").read()
 
 def buildNotification(name, title, data):
     newNotification = Notify.Notification.new(name + ": " + title, data, "dialog-information")
     newNotification.show()
 
+def clearValidDevices():
+    deviceFile = open(os.path.expanduser("~/.local/share/LinuxNotifier/devices.json"), "w+")
+    deviceFile.write("{}");
+    deviceFile.close()
+
 def readValidDevices():
     try:
-        deviceFile = open(os.environ["HOME"] + "/.local/share/LinuxNotifier/devices.json", "r")
+        deviceFile = open(os.path.expanduser("~/.local/share/LinuxNotifier/devices.json"), "r")
         jsonObject = json.load(deviceFile)
         deviceFile.close()
         devices = []
@@ -55,8 +53,8 @@ def readValidDevices():
             return
     except FileNotFoundError:
         print("file not found error")
-        os.makedirs(os.environ["HOME"] + "/.local/share/LinuxNotifier/")
-        deviceFile = open(os.environ["HOME"] + "/.local/share/LinuxNotifier/devices.json", "w+")
+        os.makedirs(os.path.expanduser("~/.local/share/LinuxNotifier"))
+        deviceFile = open(os.path.expanduser("~/.local/share/LinuxNotifier/devices.json"), "w+")
         deviceFile.write("{}");
         deviceFile.close()
         return
@@ -77,7 +75,7 @@ def writeValidDevices(deviceList):
     jsonObject["pin"] = pins
 
     output = json.dumps(jsonObject)
-    outputFile = open(os.environ["HOME"] + "/.local/share/LinuxNotifier/devices.json", "w+")
+    outputFile = open(os.path.expanduser("~/.local/share/LinuxNotifier/devices.json"), "w+")
     outputFile.write(output)
     outputFile.close()
 
@@ -144,9 +142,9 @@ class receiver(threading.Thread):
             data = connection.recv(1024)
 
             if data:
-                print("Got data, message: " + trimReceivedString(str(data)) + ".")
+                print("Got data, message: " + data.decode("utf-8") + ".")
 
-                receivedData = json.loads(data.decode('utf-8'))
+                receivedData = json.loads(data.decode("utf-8"))
                 dataToSend = ""
 
                 if(receivedData["reason"] == "request information"):
@@ -201,31 +199,35 @@ class receiver(threading.Thread):
 
 
 if __name__=="__main__":
-    try:
-        Notify.init("LinuxNotifier")
-        ipAddress = getIPAddress()
-        PORT = 5005
+    if(len(sys.argv) > 1 and sys.argv[1] == "clear"):
+        clearValidDevices()
 
-        listener = socket.socket(socket.AF_INET,
-                             socket.SOCK_STREAM)
-        listener.bind((ipAddress, PORT))
-        listener.listen(1)
-        listener.setblocking(True)
-        listenerThread = receiver(1, True)
+    else:
+        try:
+            Notify.init("LinuxNotifier")
+            ipAddress = getIPAddress()
+            PORT = 5005
 
-        validDevices = readValidDevices();
-        if(validDevices):
-            for validDevice in validDevices:
-                listenerThread.addValidDevice(validDevice)
+            listener = socket.socket(socket.AF_INET,
+                                 socket.SOCK_STREAM)
+            listener.bind((ipAddress, PORT))
+            listener.listen(1)
+            listener.setblocking(True)
+            listenerThread = receiver(1, True)
 
-        listenerThread.start()
+            validDevices = readValidDevices();
+            if(validDevices):
+                for validDevice in validDevices:
+                    listenerThread.addValidDevice(validDevice)
 
-    except socket.error:
-        print("Network error: can't assign IP address.")
-    except threading.ThreadError:
-        print("Threading error: can't create thread.")
-    except KeyboardInterrupt:
-        print("Keyboard interrupt detected")
-        if(listenerThread):
-            listenerThread.setMustContinue(False)
-        listener.close()
+            listenerThread.start()
+
+        except socket.error:
+            print("Network error: can't assign IP address.")
+        except threading.ThreadError:
+            print("Threading error: can't create thread.")
+        except KeyboardInterrupt:
+            print("Keyboard interrupt detected")
+            if(listenerThread):
+                listenerThread.setMustContinue(False)
+            listener.close()
