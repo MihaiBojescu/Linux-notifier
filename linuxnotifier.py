@@ -4,6 +4,7 @@ import os
 import sys
 import uuid
 import json
+import signal
 import socket
 import threading
 gi.require_version("Gtk", "3.0")
@@ -21,7 +22,7 @@ def getMacAddress():
   return mac
 
 def getIPAddress():
-    return os.popen("ip route get 1 | head -n 1 | cut -d \" \" -f7").read()
+    return os.popen("ip route get 1 | head -n 1 | awk '{print $NF}'").read()
 
 def buildNotification(name, title, data):
     newNotification = Notify.Notification.new(name + ": " + title, data, "dialog-information")
@@ -214,6 +215,7 @@ if __name__=="__main__":
             listener.listen(1)
             listener.setblocking(True)
             listenerThread = receiver(1, True)
+            listenerThread.daemon = True
 
             validDevices = readValidDevices();
             if(validDevices):
@@ -221,9 +223,10 @@ if __name__=="__main__":
                     listenerThread.addValidDevice(validDevice)
 
             listenerThread.start()
+            signal.pause()
 
         except socket.error:
-            print("Network error: can't assign IP address.")
+            print("Network error: cannot bind port.")
         except threading.ThreadError:
             print("Threading error: can't create thread.")
         except KeyboardInterrupt:
