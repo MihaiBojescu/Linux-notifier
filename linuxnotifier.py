@@ -13,21 +13,6 @@ from threading import Thread
 from gi.repository import Gtk
 from gi.repository import Notify
 
-def trimReceivedString(string):
-    return string[2:-1]
-
-def getMacAddress():
-  macNum = hex(uuid.getnode()).replace("0x", "").upper()
-  mac = ":".join(macNum[i : i + 2] for i in range(0, 11, 2))
-  return mac
-
-def getIPAddress():
-    return os.popen("ip route get 1 | head -n 1 | awk '{print $NF}'").read()
-
-def buildNotification(name, title, data):
-    newNotification = Notify.Notification.new(name + ": " + title, data, "dialog-information")
-    newNotification.show()
-
 def clearValidDevices():
     deviceFile = open(os.path.expanduser("~/.local/share/LinuxNotifier/devices.json"), "w+")
     deviceFile.write("{}");
@@ -128,21 +113,20 @@ class authWindow(Gtk.Window):
         self.destroy()
         Gtk.main_quit()
 
-class receiver(threading.Thread):
-    def __init__(self, id, mustContinue):
-        threading.Thread.__init__(self)
-        self.id = id
-        self.mustContinue = mustContinue
+class receiver(Thread):
+    def __init__(self):
+        Thread.__init__(self)
+        self.daemon = True
+        self.mustContinue = True
         self.validDevices = []
 
     def run(self):
-        while self.mustContinue:
+        while(self.mustContinue):
             print("Listening...")
-            listener.listen()
             connection, address = listener.accept()
             data = connection.recv(1024)
 
-            if data:
+            if(data):
                 print("Got data, message: " + data.decode("utf-8") + ".")
 
                 receivedData = json.loads(data.decode("utf-8"))
@@ -152,7 +136,7 @@ class receiver(threading.Thread):
                     print("Data is a request for information.")
                     dataToSend = {
                         "name": socket.gethostname(),
-                        "mac": getMacAddress()
+                        "mac": self.getMacAddress()
                     }
                     connection.send(str.encode(str(dataToSend)))
 
@@ -170,7 +154,13 @@ class receiver(threading.Thread):
                         }
 
                         newDevice = device(receivedData["name"], receivedData["address"], receivedData["pin"])
-                        if(newDevice not in self.validDevices):
+
+                        self.shouldAdd = True
+                        for currentDevice in self.validDevices:
+                            if(newDevice.address == currentDevice.address):
+                                self.shouldAdd = False
+
+                        if(self.shouldAdd):
                             self.validDevices.append(newDevice)
                             writeValidDevices(self.validDevices)
 
@@ -186,36 +176,43 @@ class receiver(threading.Thread):
                 elif(receivedData["reason"] == "notification"):
                     for currentDevice in self.validDevices:
                         if(currentDevice.address == str(address[0])):
-                            buildNotification(receivedData["appName"], receivedData["title"], receivedData["data"])
+                            self.buildNotification(receivedData["appName"], receivedData["title"], receivedData["data"])
                             break
 
                 connection.close()
 
-    def setMustContinue(self, value):
-        self.mustContinue = value
+    def stop(self):
+        self.mustContinue = False
 
     def addValidDevice(self, newDevice):
         print("New valid device: " + newDevice.name)
         self.validDevices.append(newDevice)
 
+    def getIPAddress(self):
+        return os.popen("ip route get 1 | head -n 1 | awk '{print $NF}'").read()
 
-if __name__=="__main__":
+    def getMacAddress(self):
+        macNum = hex(uuid.getnode()).replace("0x", "").upper()
+        mac = ":".join(macNum[i : i + 2] for i in range(0, 11, 2))
+        return mac
+
+    def buildNotification(self, name, title, data):
+        newNotification = Notify.Notification.new(name + ": " + title, data, "dialog-information")
+        newNotification.show()
+
+if __name__== "__main__":
     if(len(sys.argv) > 1 and sys.argv[1] == "clear"):
         clearValidDevices()
 
     else:
         try:
             Notify.init("LinuxNotifier")
-            ipAddress = getIPAddress()
-            PORT = 5005
+            listenerThread = receiver()
 
-            listener = socket.socket(socket.AF_INET,
-                                 socket.SOCK_STREAM)
-            listener.bind((ipAddress, PORT))
+            listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            listener.bind((listenerThread.getIPAddress(), 5005))
             listener.listen(1)
             listener.setblocking(True)
-            listenerThread = receiver(1, True)
-            listenerThread.daemon = True
 
             validDevices = readValidDevices();
             if(validDevices):
@@ -230,7 +227,9 @@ if __name__=="__main__":
         except threading.ThreadError:
             print("Threading error: can't create thread.")
         except KeyboardInterrupt:
-            print("Keyboard interrupt detected")
-            if(listenerThread):
-                listenerThread.setMustContinue(False)
-            listener.close()
+            print("Keyboard interrupt detected.")
+            
+        if(listenerThread):
+            listenerThread.stop()
+        listener.close()
+        sys.exit()
