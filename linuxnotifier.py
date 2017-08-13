@@ -190,7 +190,7 @@ class receiver(Thread):
                     print("Notification from " + str(address[0]))
                     for currentDevice in self.validDevices:
                         if(currentDevice.address == str(address[0])):
-                            self.buildNotification(receivedData["appName"], receivedData["title"], receivedData["data"])
+                            self.buildNotification(currentDevice.name, receivedData["appName"], receivedData["title"], receivedData["data"])
                             break
 
                 elif(receivedData["reason"] == "deny authentification"):
@@ -217,8 +217,8 @@ class receiver(Thread):
         mac = ":".join(macNum[i : i + 2] for i in range(0, 11, 2))
         return mac
 
-    def buildNotification(self, name, title, data):
-        newNotification = Notify.Notification.new(name + ": " + title, data, "dialog-information")
+    def buildNotification(self, deviceName, name, title, data):
+        newNotification = Notify.Notification.new(deviceName + "@" + name + " app: " + title, data, "dialog-information")
         newNotification.show()
 
 if __name__== "__main__":
