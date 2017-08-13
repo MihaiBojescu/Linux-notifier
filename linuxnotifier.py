@@ -12,6 +12,13 @@ gi.require_version("Notify", "0.7")
 from threading import Thread
 from gi.repository import Gtk
 from gi.repository import Notify
+from gi.repository import GObject
+
+def exit():
+    if(listenerThread):
+        listenerThread.stop()
+    listener.close()
+    sys.exit()
 
 def clearValidDevices():
     deviceFile = open(os.path.expanduser("~/.local/share/LinuxNotifier/devices.json"), "w+")
@@ -101,6 +108,7 @@ class authWindow(Gtk.Window):
 
         self.present()
         self.set_keep_above(True)
+        GObject.timeout_add(10000, self.closeAndDeny)
         self.set_default(denyButton)
 
     def accepted(self, button):
@@ -109,6 +117,11 @@ class authWindow(Gtk.Window):
         Gtk.main_quit()
 
     def denied(self, button):
+        self.accepted = False
+        self.destroy()
+        Gtk.main_quit()
+
+    def closeAndDeny(self):
         self.accepted = False
         self.destroy()
         Gtk.main_quit()
@@ -174,9 +187,17 @@ class receiver(Thread):
                         connection.send(str.encode(str(dataToSend)))
 
                 elif(receivedData["reason"] == "notification"):
+                    print("Notification from " + str(address[0]))
                     for currentDevice in self.validDevices:
                         if(currentDevice.address == str(address[0])):
                             self.buildNotification(receivedData["appName"], receivedData["title"], receivedData["data"])
+                            break
+
+                elif(receivedData["reason"] == "deny authentification"):
+                    print("Deny auth for " + str(address[0]))
+                    for currentDevice in self.validDevices:
+                        if(currentDevice.address == str(address[0])):
+                            validDevices.remove(currentDevice)
                             break
 
                 connection.close()
@@ -224,12 +245,10 @@ if __name__== "__main__":
 
         except socket.error:
             print("Network error: cannot bind port.")
+            exit()
         except threading.ThreadError:
             print("Threading error: can't create thread.")
+            exit()
         except KeyboardInterrupt:
             print("Keyboard interrupt detected.")
-            
-        if(listenerThread):
-            listenerThread.stop()
-        listener.close()
-        sys.exit()
+            exit()

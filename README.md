@@ -6,6 +6,8 @@ The service will <b>run as an user service</b>.
 ## Requirements
 * Python 3
 * Libnotify
+* python-gi
+* python-gobject
 
 ## Installation
 Run `sudo make install` or just `sudo make`.
