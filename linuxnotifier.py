@@ -17,7 +17,10 @@ from gi.repository import GObject
 def exit():
     if(listenerThread):
         listenerThread.stop()
-    listener.close()
+    if(discoveryRecv):
+        discoveryRecv.stop()
+    if(discoverySend):
+        discoverySend.stop()
     sys.exit()
 
 def clearValidDevices():
@@ -126,36 +129,86 @@ class authWindow(Gtk.Window):
         self.destroy()
         Gtk.main_quit()
 
-class receiver(Thread):
+class UDPSender():
+    def __init__(self):
+        Thread.__init__(self)
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 1)
+
+    def sendData(self, address):
+        dataToSend = {
+            "reason": "linux notifier discovery",
+            "from": "desktop",
+            "name": socket.gethostname(),
+            "mac": listenerThread.getMacAddress()
+        }
+        print(' '.join(("Sending to", address, "message", str(dataToSend))))
+        self.socket.sendto(str.encode(str(dataToSend)), (address, 5005))
+
+    def stop(self):
+        self.socket.close()
+
+class UDPReceiver(Thread):
+    def __init__(self):
+        Thread.__init__(self)
+        self.daemon = True
+        self.mustContinue = True
+
+        try:
+            self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.socket.bind(('', 5005))
+
+        except socket.error:
+            print("Can't create UDP socket on port 5005.")
+            exit()
+
+    def run(self):
+        while(self.mustContinue):
+            data, address = self.socket.recvfrom(1024)
+
+            if(data):
+                message = json.loads(data.decode("utf-8"))
+                print(message)
+
+                if(message["reason"] == "linux notifier discovery" and message["from"] == "android"):
+                    discoverySend.sendData(str(address[0]))
+
+    def stop(self):
+        self.mustContinue = False
+        self.socket.close()
+
+class TCPReceiver(Thread):
     def __init__(self):
         Thread.__init__(self)
         self.daemon = True
         self.mustContinue = True
         self.validDevices = []
 
+        try:
+            self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.socket.bind(('', 5005))
+            self.socket.listen(1)
+            self.socket.setblocking(True)
+
+        except socket.error:
+            print("Can't create TCP socket on port 5005.")
+            exit()
+
     def run(self):
         while(self.mustContinue):
             print("Listening...")
-            connection, address = listener.accept()
+            connection, address = self.socket.accept()
             data = connection.recv(1024)
 
             if(data):
                 print("Got data, message: " + data.decode("utf-8") + ".")
 
-                receivedData = json.loads(data.decode("utf-8"))
+                message = json.loads(data.decode("utf-8"))
                 dataToSend = ""
 
-                if(receivedData["reason"] == "request information"):
-                    print("Data is a request for information.")
-                    dataToSend = {
-                        "name": socket.gethostname(),
-                        "mac": self.getMacAddress()
-                    }
-                    connection.send(str.encode(str(dataToSend)))
-
-                elif(receivedData["reason"] == "authentificate"):
+                if(message["reason"] == "authentificate"):
                     print("auth")
-                    newWindow = authWindow(receivedData["name"], receivedData["address"], receivedData["pin"])
+                    newWindow = authWindow(message["name"], str(address[0]), message["pin"])
                     newWindow.show_all()
                     Gtk.main()
 
@@ -166,7 +219,7 @@ class receiver(Thread):
                             "response": "1"
                         }
 
-                        newDevice = device(receivedData["name"], receivedData["address"], receivedData["pin"])
+                        newDevice = device(message["name"], str(address[0]), message["pin"])
 
                         self.shouldAdd = True
                         for currentDevice in self.validDevices:
@@ -178,6 +231,7 @@ class receiver(Thread):
                             writeValidDevices(self.validDevices)
 
                         connection.send(str.encode(str(dataToSend)))
+
                     else:
                         print("denied")
                         dataToSend = {
@@ -186,15 +240,15 @@ class receiver(Thread):
                         }
                         connection.send(str.encode(str(dataToSend)))
 
-                elif(receivedData["reason"] == "notification"):
+                elif(message["reason"] == "notification"):
                     print("Notification from " + str(address[0]))
                     for currentDevice in self.validDevices:
                         if(currentDevice.address == str(address[0])):
-                            self.buildNotification(currentDevice.name, receivedData["appName"], receivedData["title"], receivedData["data"])
+                            self.buildNotification(currentDevice.name, message["app name"], message["title"], message["data"])
                             break
 
-                elif(receivedData["reason"] == "deny authentification"):
-                    print("Deny auth for " + str(address[0]))
+                elif(message["reason"] == "revoke authentification"):
+                    print("Revoking auth for " + str(address[0]))
                     for currentDevice in self.validDevices:
                         if(currentDevice.address == str(address[0])):
                             validDevices.remove(currentDevice)
@@ -204,13 +258,17 @@ class receiver(Thread):
 
     def stop(self):
         self.mustContinue = False
+        self.socket.close()
 
     def addValidDevice(self, newDevice):
-        print("New valid device: " + newDevice.name)
-        self.validDevices.append(newDevice)
+        self.shouldAdd = True
+        for currentDevice in self.validDevices:
+            if(newDevice.address == currentDevice.address):
+                self.shouldAdd = False
 
-    def getIPAddress(self):
-        return os.popen("ip route get 1 | head -n 1 | awk '{print $NF}'").read()
+        if(self.shouldAdd):
+            print("New valid device: " + newDevice.name)
+            self.validDevices.append(newDevice)
 
     def getMacAddress(self):
         macNum = hex(uuid.getnode()).replace("0x", "").upper()
@@ -228,12 +286,13 @@ if __name__== "__main__":
     else:
         try:
             Notify.init("LinuxNotifier")
-            listenerThread = receiver()
+            listenerThread = TCPReceiver()
 
-            listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            listener.bind((listenerThread.getIPAddress(), 5005))
-            listener.listen(1)
-            listener.setblocking(True)
+            discoverySend = UDPSender()
+            discoverySend.sendData("224.0.0.1")
+
+            discoveryRecv = UDPReceiver()
+            discoveryRecv.start()
 
             validDevices = readValidDevices();
             if(validDevices):
@@ -241,6 +300,7 @@ if __name__== "__main__":
                     listenerThread.addValidDevice(validDevice)
 
             listenerThread.start()
+
             signal.pause()
 
         except socket.error:
