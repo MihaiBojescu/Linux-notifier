@@ -6,13 +6,15 @@ import uuid
 import json
 import signal
 import socket
+import warnings
 import threading
-gi.require_version("Gtk", "3.0")
-gi.require_version("Notify", "0.7")
 from threading import Thread
-from gi.repository import Gtk
+gi.require_version("Notify", "0.7")
 from gi.repository import Notify
-from gi.repository import GObject
+from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QVBoxLayout, QHBoxLayout, QLabel
+from PyQt5.QtGui import QIcon, QFont
+from PyQt5.QtCore import QTimer, Qt
+
 
 def exit():
     if(listenerThread):
@@ -23,10 +25,12 @@ def exit():
         discoverySend.stop()
     sys.exit()
 
+
 def clearValidDevices():
     deviceFile = open(os.path.expanduser("~/.local/share/LinuxNotifier/devices.json"), "w+")
-    deviceFile.write("{}");
+    deviceFile.write("{}")
     deviceFile.close()
+
 
 def readValidDevices():
     try:
@@ -51,9 +55,10 @@ def readValidDevices():
         print("file not found error")
         os.makedirs(os.path.expanduser("~/.local/share/LinuxNotifier"))
         deviceFile = open(os.path.expanduser("~/.local/share/LinuxNotifier/devices.json"), "w+")
-        deviceFile.write("{}");
+        deviceFile.write("{}")
         deviceFile.close()
         return
+
 
 def writeValidDevices(deviceList):
     jsonObject = {}
@@ -82,52 +87,63 @@ class device():
         self.address = address
         self.pin = pin
 
-class authWindow(Gtk.Window):
+
+class authWindow(QWidget):
     def __init__(self, name, address, pin):
-        Gtk.Window.__init__(self, title="Linux notifier")
+        super().__init__()
+        self.setWindowTitle("Authentification window")
+        self.icon = QIcon()
+        self.icon.addFile("icon.png")
+        self.setWindowIcon(self.icon)
 
-        vBox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        hBox = Gtk.Box(spacing=2)
+        self.acceptButton = QPushButton("Accept", self)
+        self.acceptButton.clicked.connect(self.accepted)
+        self.denyButton = QPushButton("Deny", self)
+        self.denyButton.clicked.connect(self.denied)
 
-        self.add(vBox)
+        self.label = QLabel()
+        self.label.setText(''.join(("Authentification request from:\nName: ",
+                                    name, ",\nAddress: ",
+                                    address, ".")))
+        self.pinLabel = QLabel()
+        self.pinLabel.setText(''.join(("PIN: ", pin)))
+        self.pinLabel.setFont(QFont("Noto Sans", 24, QFont.Normal))
 
-        label = Gtk.Label()
-        label.set_markup("Authentification request from " + name + " (" + address + ").")
-        pinLabel = Gtk.Label()
-        pinLabel.set_markup("<span size=\"24000\">PIN: " + pin + "</span>")
+        self.hBox = QHBoxLayout()
+        self.hBox.addStretch(1)
+        self.hBox.addWidget(self.acceptButton)
+        self.hBox.addWidget(self.denyButton)
 
-        vBox.pack_start(label, True, True, 0)
-        vBox.pack_start(pinLabel, True, True, 0)
-        vBox.pack_start(hBox, True, True, 0)
+        self.vBox = QVBoxLayout()
+        self.vBox.addStretch(1)
+        self.vBox.addWidget(self.label)
+        self.vBox.addWidget(self.pinLabel)
+        self.vBox.addLayout(self.hBox)
 
-        acceptButton = Gtk.Button.new_with_label("Accept")
-        acceptButton.connect("clicked", self.accepted)
-        denyButton = Gtk.Button.new_with_label("Deny")
-        denyButton.connect("clicked", self.denied)
-        self.connect("delete-event", self.denied)
+        self.setLayout(self.vBox)
 
-        hBox.pack_start(denyButton, True, True, 0)
-        hBox.pack_start(acceptButton, True, True, 0)
+        self.timer = QTimer()
+        self.timer.timeout.connect(self.closeAndDeny)
+        self.timer.start(10000)
 
-        self.present()
-        self.set_keep_above(True)
-        GObject.timeout_add(10000, self.closeAndDeny)
-        self.set_default(denyButton)
+        self.show()
 
-    def accepted(self, button):
+    def keyPressEvent(self, e):
+        if(e.key() == Qt.Key_Escape):
+            self.closeAndDeny()
+
+    def accepted(self):
         self.accepted = True
-        self.destroy()
-        Gtk.main_quit()
+        self.close()
 
-    def denied(self, button):
+    def denied(self):
         self.accepted = False
-        self.destroy()
-        Gtk.main_quit()
+        self.close()
 
     def closeAndDeny(self):
         self.accepted = False
-        self.destroy()
-        Gtk.main_quit()
+        self.close()
+
 
 class UDPSender():
     def __init__(self):
@@ -147,6 +163,7 @@ class UDPSender():
 
     def stop(self):
         self.socket.close()
+
 
 class UDPReceiver(Thread):
     def __init__(self):
@@ -170,12 +187,14 @@ class UDPReceiver(Thread):
                 message = json.loads(data.decode("utf-8"))
                 print(message)
 
-                if(message["reason"] == "linux notifier discovery" and message["from"] == "android"):
+                if(message["reason"] == "linux notifier discovery" and
+                   message["from"] == "android"):
                     discoverySend.sendData(str(address[0]))
 
     def stop(self):
         self.mustContinue = False
         self.socket.close()
+
 
 class TCPReceiver(Thread):
     def __init__(self):
@@ -208,9 +227,12 @@ class TCPReceiver(Thread):
 
                 if(message["reason"] == "authentificate"):
                     print("auth")
-                    newWindow = authWindow(message["name"], str(address[0]), message["pin"])
-                    newWindow.show_all()
-                    Gtk.main()
+                    app = QApplication(sys.argv)
+                    newWindow = authWindow(message["name"],
+                                           str(address[0]),
+                                           message["pin"])
+                    app.exec_()
+                    app.quit()
 
                     if(newWindow.accepted):
                         print("accepted")
@@ -219,7 +241,9 @@ class TCPReceiver(Thread):
                             "response": "1"
                         }
 
-                        newDevice = device(message["name"], str(address[0]), message["pin"])
+                        newDevice = device(message["name"],
+                                           str(address[0]),
+                                           message["pin"])
 
                         self.shouldAdd = True
                         for currentDevice in self.validDevices:
@@ -244,7 +268,10 @@ class TCPReceiver(Thread):
                     print("Notification from " + str(address[0]))
                     for currentDevice in self.validDevices:
                         if(currentDevice.address == str(address[0])):
-                            self.buildNotification(currentDevice.name, message["app name"], message["title"], message["data"])
+                            self.buildNotification(currentDevice.name,
+                                                   message["app name"],
+                                                   message["title"],
+                                                   message["data"])
                             break
 
                 elif(message["reason"] == "revoke authentification"):
@@ -272,14 +299,20 @@ class TCPReceiver(Thread):
 
     def getMacAddress(self):
         macNum = hex(uuid.getnode()).replace("0x", "").upper()
-        mac = ":".join(macNum[i : i + 2] for i in range(0, 11, 2))
+        mac = ":".join(macNum[i: i + 2] for i in range(0, 11, 2))
         return mac
 
     def buildNotification(self, deviceName, name, title, data):
-        newNotification = Notify.Notification.new(deviceName + "@" + name + " app: " + title, data, "dialog-information")
+        newNotification = Notify.Notification.new(''.join((deviceName,
+                                                           "@", name, " app: ",
+                                                           title,
+                                                           data,
+                                                           "dialog-information")))
         newNotification.show()
 
-if __name__== "__main__":
+
+if(__name__ == "__main__"):
+    warnings.simplefilter("ignore")
     if(len(sys.argv) > 1 and sys.argv[1] == "clear"):
         clearValidDevices()
 
@@ -294,7 +327,7 @@ if __name__== "__main__":
             discoveryRecv = UDPReceiver()
             discoveryRecv.start()
 
-            validDevices = readValidDevices();
+            validDevices = readValidDevices()
             if(validDevices):
                 for validDevice in validDevices:
                     listenerThread.addValidDevice(validDevice)

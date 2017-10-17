@@ -7,7 +7,7 @@ The service will <b>run as an user service</b>.
 * Python 3
 * Libnotify
 * python-gi
-* python-gobject
+* pyqt5
 
 ## Installation
 Run `sudo make install` or just `sudo make`.
