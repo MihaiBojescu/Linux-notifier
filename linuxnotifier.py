@@ -10,10 +10,8 @@ import warnings
 import threading
 from threading import Thread
 gi.require_version("Notify", "0.7")
-from gi.repository import Notify
-from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QVBoxLayout, QHBoxLayout, QLabel
-from PyQt5.QtGui import QIcon, QFont
-from PyQt5.QtCore import QTimer, Qt
+gi.require_version('Gtk', '3.0')
+from gi.repository import Notify, GObject
 
 
 def exit():
@@ -60,6 +58,13 @@ def readValidDevices():
         return
 
 
+class device():
+    def __init__(self, name, address, pin):
+        self.name = name
+        self.address = address
+        self.pin = pin
+
+
 def writeValidDevices(deviceList):
     jsonObject = {}
     names = []
@@ -81,68 +86,70 @@ def writeValidDevices(deviceList):
     outputFile.close()
 
 
-class device():
-    def __init__(self, name, address, pin):
+class authThread(threading.Thread):
+    def __init__(self, name, address, pin, deviceList, connection):
+        Thread.__init__(self)
         self.name = name
         self.address = address
         self.pin = pin
+        self.deviceList = deviceList
+        self.connection = connection
 
+    def run(self):
+        self.loop = GObject.MainLoop()
+        self.authNotification = Notify.Notification.new("Auth request",
+                                                        ''.join(("From ", self.name, " (", self.address, "), with PIN: ", self.pin, ".")))
+        self.authNotification.set_timeout(Notify.EXPIRES_NEVER)
+        self.authNotification.add_action("accept", "Accept", self.acceptAuth, None)
+        self.authNotification.add_action("deny", "Deny", self.denyAuth, None)
+        self.authNotification.connect("closed", self.denyAuthNoClick, self)
+        self.authNotification.show()
+        GObject.timeout_add(10000, self.denyAuthNoClick)
+        self.loop.run()
 
-class authWindow(QWidget):
-    def __init__(self, name, address, pin):
-        super().__init__()
-        self.setWindowTitle("Authentification window")
-        self.icon = QIcon()
-        self.icon.addFile("icon.png")
-        self.setWindowIcon(self.icon)
+    def acceptAuth(self, notification, action, data):
+        print("accepted")
+        newDevice = device(self.name,
+                           self.address,
+                           self.pin)
 
-        self.acceptButton = QPushButton("Accept", self)
-        self.acceptButton.clicked.connect(self.accepted)
-        self.denyButton = QPushButton("Deny", self)
-        self.denyButton.clicked.connect(self.denied)
+        self.shouldAdd = True
+        for currentDevice in self.deviceList:
+            if(newDevice.address == currentDevice.address):
+                self.shouldAdd = False
 
-        self.label = QLabel()
-        self.label.setText(''.join(("Authentification request from:\nName: ",
-                                    name, ",\nAddress: ",
-                                    address, ".")))
-        self.pinLabel = QLabel()
-        self.pinLabel.setText(''.join(("PIN: ", pin)))
-        self.pinLabel.setFont(QFont("Noto Sans", 24, QFont.Normal))
+        if(self.shouldAdd):
+            self.deviceList.append(newDevice)
+            writeValidDevices(self.deviceList)
 
-        self.hBox = QHBoxLayout()
-        self.hBox.addStretch(1)
-        self.hBox.addWidget(self.acceptButton)
-        self.hBox.addWidget(self.denyButton)
+        dataToSend = {
+            "reason": "authresponse",
+            "response": "1"
+        }
+        self.connection.send(str.encode(str(dataToSend)))
+        notification.close()
+        self.loop.quit()
 
-        self.vBox = QVBoxLayout()
-        self.vBox.addStretch(1)
-        self.vBox.addWidget(self.label)
-        self.vBox.addWidget(self.pinLabel)
-        self.vBox.addLayout(self.hBox)
+    def denyAuth(self, notification):
+        dataToSend = {
+            "reason": "authresponse",
+            "response": "0"
+        }
+        self.connection.send(str.encode(str(dataToSend)))
+        notification.close()
+        self.loop.quit()
 
-        self.setLayout(self.vBox)
+    def denyAuthNoClick(self):
+        dataToSend = {
+            "reason": "authresponse",
+            "response": "0"
+        }
+        self.connection.send(str.encode(str(dataToSend)))
+        self.authNotification.close()
+        self.loop.quit()
 
-        self.timer = QTimer()
-        self.timer.timeout.connect(self.closeAndDeny)
-        self.timer.start(10000)
-
-        self.show()
-
-    def keyPressEvent(self, e):
-        if(e.key() == Qt.Key_Escape):
-            self.closeAndDeny()
-
-    def accepted(self):
-        self.accepted = True
-        self.close()
-
-    def denied(self):
-        self.accepted = False
-        self.close()
-
-    def closeAndDeny(self):
-        self.accepted = False
-        self.close()
+    def denyAuthTimeout(self, param):
+        self.denyAuthNoClick()
 
 
 class UDPSender():
@@ -223,46 +230,12 @@ class TCPReceiver(Thread):
                 print("Got data, message: " + data.decode("utf-8") + ".")
 
                 message = json.loads(data.decode("utf-8"))
-                dataToSend = ""
-
                 if(message["reason"] == "authentificate"):
                     print("auth")
-                    app = QApplication(sys.argv)
-                    newWindow = authWindow(message["name"],
-                                           str(address[0]),
-                                           message["pin"])
-                    app.exec_()
-                    app.quit()
-
-                    if(newWindow.accepted):
-                        print("accepted")
-                        dataToSend = {
-                            "reason": "authresponse",
-                            "response": "1"
-                        }
-
-                        newDevice = device(message["name"],
-                                           str(address[0]),
-                                           message["pin"])
-
-                        self.shouldAdd = True
-                        for currentDevice in self.validDevices:
-                            if(newDevice.address == currentDevice.address):
-                                self.shouldAdd = False
-
-                        if(self.shouldAdd):
-                            self.validDevices.append(newDevice)
-                            writeValidDevices(self.validDevices)
-
-                        connection.send(str.encode(str(dataToSend)))
-
-                    else:
-                        print("denied")
-                        dataToSend = {
-                            "reason": "authresponse",
-                            "response": "0"
-                        }
-                        connection.send(str.encode(str(dataToSend)))
+                    newAuthThread = authThread(message["name"], str(address[0]),
+                                               message["pin"], self.validDevices,
+                                               connection)
+                    newAuthThread.start()
 
                 elif(message["reason"] == "notification"):
                     print("Notification from " + str(address[0]))
@@ -273,6 +246,7 @@ class TCPReceiver(Thread):
                                                    message["title"],
                                                    message["data"])
                             break
+                    connection.close()
 
                 elif(message["reason"] == "revoke authentification"):
                     print("Revoking auth for " + str(address[0]))
@@ -280,8 +254,10 @@ class TCPReceiver(Thread):
                         if(currentDevice.address == str(address[0])):
                             validDevices.remove(currentDevice)
                             break
+                        connection.close()
 
-                connection.close()
+                else:
+                    connection.close()
 
     def stop(self):
         self.mustContinue = False
