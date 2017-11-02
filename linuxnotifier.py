@@ -46,9 +46,11 @@ def readValidDevices():
                 devices.append(newDevice)
                 i += 1
             return devices
+
         except:
-            print("error")
+            print("Error opening devices file (maybe it doesn't exist?).")
             return
+
     except FileNotFoundError:
         print("file not found error")
         os.makedirs(os.path.expanduser("~/.local/share/LinuxNotifier"))
@@ -56,14 +58,6 @@ def readValidDevices():
         deviceFile.write("{}")
         deviceFile.close()
         return
-
-
-class device():
-    def __init__(self, name, address, pin):
-        self.name = name
-        self.address = address
-        self.pin = pin
-
 
 def writeValidDevices(deviceList):
     jsonObject = {}
@@ -84,6 +78,51 @@ def writeValidDevices(deviceList):
     outputFile = open(os.path.expanduser("~/.local/share/LinuxNotifier/devices.json"), "w+")
     outputFile.write(output)
     outputFile.close()
+
+
+class configFile:
+    def __init__(self):
+        self.modificationDate = self.getModificationDate()
+        self.defaultConfig = "[Device]@[App] app: [NewLine][Title][NewLine][Data]"
+
+    def createConfig(self):
+        try:
+            configFile = open(os.path.expanduser("~/.local/share/LinuxNotifier/config.conf"), "w+")
+            configFile.write(self.defaultConfig)
+            configFile.close()
+
+        except OSError:
+            exit()
+
+    def getConfig(self):
+        try:
+            configFile = open(os.path.expanduser("~/.local/share/LinuxNotifier/config.conf"), "r")
+            returnString = configFile.read()
+            configFile.close()
+            return returnString
+
+        except OSError:
+            self.createConfig()
+            return self.defaultConfig
+
+    def getModificationDate(self):
+        try:
+            return os.path.getmtime(os.path.expanduser("~/.local/share/LinuxNotifier/config.conf"))
+
+        except OSError:
+            try:
+                self.createConfig()
+                return os.path.getmtime(os.path.expanduser("~/.local/share/LinuxNotifier/config.conf"))
+
+            except OSError:
+                exit()
+
+
+class device():
+    def __init__(self, name, address, pin):
+        self.name = name
+        self.address = address
+        self.pin = pin
 
 
 class authThread(threading.Thread):
@@ -209,6 +248,9 @@ class TCPReceiver(Thread):
         self.daemon = True
         self.mustContinue = True
         self.validDevices = []
+        self.notificationConfig = configFile()
+        self.notificationStringOriginal = self.notificationConfig.getConfig()
+        self.notificationConfigModDate = self.notificationConfig.getModificationDate()
 
         try:
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -278,12 +320,18 @@ class TCPReceiver(Thread):
         mac = ":".join(macNum[i: i + 2] for i in range(0, 11, 2))
         return mac
 
-    def buildNotification(self, deviceName, name, title, data):
-        newNotification = Notify.Notification.new(''.join((deviceName,
-                                                           "@", name, " app: ",
-                                                           title,
-                                                           data,
-                                                           "dialog-information")))
+    def buildNotification(self, deviceName, appName, title, data):
+        if(self.notificationConfigModDate != self.notificationConfig.getModificationDate()):
+            self.notificationStringOriginal = self.notificationConfig.getConfig()
+
+        notificationString = self.notificationStringOriginal
+        notificationString = notificationString.replace("[NewLine]", os.linesep)
+        notificationString = notificationString.replace("[Device]", deviceName)
+        notificationString = notificationString.replace("[App]", appName)
+        notificationString = notificationString.replace("[Title]", title)
+        notificationString = notificationString.replace("[Data]", data)
+
+        newNotification = Notify.Notification.new("LinuxNotifier", notificationString, "dialog-information")
         newNotification.show()
 
 
